@@ -32,3 +32,12 @@ Then open and run the notebook:
 ```bash
 jupyter notebook steam_cleaning.ipynb
 ```
+## Recommender prototype (ALS)
+
+`recommender.ipynb` trains an implicit-feedback ALS model (Hu, Koren & Volinsky, 2008) on the user inventories and compares it with a popularity baseline. The model code is in `recommender/` and is tested in `tests/`.
+
+```bash
+python -m pip install -r requirements-recommender.txt
+python -m pytest
+jupyter notebook recommender.ipynb
+```
