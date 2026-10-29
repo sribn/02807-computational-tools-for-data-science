@@ -60,3 +60,9 @@ def test_similar_items_stay_within_group():
     model = als.fit(conf, factors=2, reg=0.1, iterations=15)
     top, _ = als.similar_items(model, item=0, n=2)
     assert set(top) == {1, 2}
+
+
+def test_idf_weighted_confidence_trusts_niche_games_more():
+    playtime = sp.csr_matrix(np.array([[60.0, 60.0], [60.0, 0.0], [60.0, 0.0]]))
+    conf = als.confidence(playtime, alpha=1.0, item_weights=als.idf_weights(playtime))
+    assert conf[0, 1] > conf[0, 0]

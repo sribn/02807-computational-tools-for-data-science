@@ -1,0 +1,6 @@
+method,precision@10,recall@10,ndcg@10,coverage
+Popularity,0.1352,0.1801,0.2205,0.0096
+Association rules (min_support=50),0.1971,0.2559,0.321,0.1006
+Item-item cosine (k=200),0.1655,0.2225,0.2709,0.1401
+ALS,0.2173,0.2816,0.3368,0.1681
+ALS + idf weighting,0.2108,0.2688,0.3291,0.1526

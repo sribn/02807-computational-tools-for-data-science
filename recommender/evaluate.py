@@ -31,9 +31,14 @@ def als_scorer(model):
     return lambda rows: model.user_factors[rows] @ model.item_factors.T
 
 
+def popularity_counts(train):
+    """Number of training users who played each game."""
+    return np.asarray((train > 0).sum(axis=0)).ravel().astype(np.float64)
+
+
 def popularity_scorer(train):
     """Score every game by how many training users played it, the same for everyone."""
-    counts = np.asarray((train > 0).sum(axis=0)).ravel().astype(np.float64)
+    counts = popularity_counts(train)
     return lambda rows: np.broadcast_to(counts, (len(rows), counts.size))
 
 

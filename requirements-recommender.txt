@@ -4,5 +4,7 @@ scipy>=1.13
 pandas>=2.2
 numba>=0.61
 implicit>=0.7.2
+scikit-learn>=1.5
+matplotlib
 notebook
 pytest

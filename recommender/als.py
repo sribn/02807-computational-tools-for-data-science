@@ -21,13 +21,26 @@ class ALSModel:
     item_factors: np.ndarray
 
 
-def confidence(playtime, alpha):
-    """Map a playtime matrix (minutes) to confidence values for the played cells."""
+def confidence(playtime, alpha, item_weights=None):
+    """Map a playtime matrix (minutes) to confidence values for the played cells.
+
+    Optional `item_weights` (one per game) scale the playtime term, e.g. `idf_weights`
+    to trust plays of niche games more than plays of games everyone has.
+    """
     playtime = playtime.tocsr()
+    signal = np.log1p(playtime.data)
+    if item_weights is not None:
+        signal = signal * np.asarray(item_weights)[playtime.indices]
     return sp.csr_matrix(
-        (1.0 + alpha * np.log1p(playtime.data), playtime.indices, playtime.indptr),
-        shape=playtime.shape,
+        (1.0 + alpha * signal, playtime.indices, playtime.indptr), shape=playtime.shape
     )
+
+
+def idf_weights(playtime):
+    """Inverse document frequency per game, log(n_users / n_players), scaled to mean 1."""
+    players = np.bincount(playtime.tocsr().indices, minlength=playtime.shape[1])
+    idf = np.log(playtime.shape[0] / np.maximum(players, 1))
+    return idf / idf.mean()
 
 
 def fit(conf, factors=32, reg=1.0, iterations=15, seed=0, callback=None):
