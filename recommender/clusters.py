@@ -120,8 +120,8 @@ def top_genre_tag(tags):
 def tag_profile(labels, tag_lists, min_share=0.2, top=4):
     """Per cluster, the content tags that are both common in it and over-represented.
 
-    A tag must be on at least `min_share` of the cluster's games; tags are ranked by lift,
-    P(tag | cluster) / P(tag), and shown as "tag (share in cluster vs share overall)".
+    A tag must be on at least `min_share` of the cluster's games and have a lift,
+    P(tag | cluster) / P(tag), above 1; tags are ranked by lift and shown as "tag (share in cluster vs share overall)".
     Meta tags (see META_TAGS) are skipped.
     """
     long = pd.DataFrame(
@@ -135,7 +135,8 @@ def tag_profile(labels, tag_lists, min_share=0.2, top=4):
     for cluster, group in long.groupby("cluster"):
         share = group["tag"].value_counts() / games_per_cluster[cluster]
         share = share[share >= min_share]
-        lift = (share / overall[share.index]).sort_values(ascending=False).head(top)
+        lift = share / overall[share.index]
+        lift = lift[lift > 1].sort_values(ascending=False).head(top)
         rows.append({
             "cluster": cluster,
             "games": int(games_per_cluster[cluster]),

@@ -48,3 +48,14 @@ def test_stage2_works_on_concatenated_grids_with_repeated_row_labels(monkeypatch
     configs = experiments.als_stage2_configs(pd.concat([part, part.assign(**{"ndcg@10": [0.0, 0.0]})]))
     assert {c["reg"] for c in configs} == {100.0, 300.0, 1000.0}
     assert all(c["factors"] == 128 for c in configs)
+
+
+def test_reg_extension_steps_past_an_edge_best_lambda(monkeypatch):
+    monkeypatch.setattr(experiments, "ALS_REGS", [100.0, 200.0, 300.0, 400.0])
+    grid = pd.DataFrame({"weighting": ["idf"] * 3 + ["none"] * 3, "alpha": [3.0] * 6,
+                         "factors": [512] * 6, "reg": [200.0, 300.0, 400.0] * 2,
+                         "ndcg@10": [0.30, 0.20, 0.10, 0.10, 0.30, 0.20]})
+    configs = experiments.reg_extensions(grid)
+    # idf's best (200) is the smallest lambda tried; none's best (300) is inside its range.
+    assert configs == [{"weighting": "idf", "alpha": 3.0, "factors": 512, "reg": 100.0}]
+    assert experiments.reg_extensions(pd.concat([grid, pd.DataFrame([{**configs[0], "ndcg@10": 0.2}])])) == []

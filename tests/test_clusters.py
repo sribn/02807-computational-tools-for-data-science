@@ -65,3 +65,11 @@ def test_largest_cluster_share_counts_recommended_slots():
     labels = np.array([0, 0, 1, 2])
     recs = np.array([[0, 1], [0, 2]])
     assert clusters.largest_cluster_share(recs, labels) == 0.75
+
+
+def test_tag_profile_leaves_out_common_tags_that_are_under_represented():
+    labels = np.array([0] * 4 + [1] * 4)
+    tags = [["Action", "Puzzle"]] * 2 + [["Puzzle"]] * 2 + [["Action"]] * 4
+    table = clusters.tag_profile(labels, tags, min_share=0.2, top=4).set_index("cluster")
+    # Action is on half of cluster 0's games but on 75% of all games.
+    assert table.loc[0, "tags (share in cluster vs overall)"] == "Puzzle (100% vs 50%)"

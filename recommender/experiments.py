@@ -35,6 +35,7 @@ ALS_REGS = [30.0, 100.0, 200.0, 250.0, 300.0, 375.0, 450.0, 700.0, 1000.0, 1500.
 ALS_SMALL_REGS = [1.0, 10.0]               # shows what happens without strong regularisation
 ALS_ALPHAS = [1.0, 3.0, 10.0]
 ALS_WEIGHTINGS = ["none", "idf"]
+ALS_KEYS = ["weighting", "alpha", "factors", "reg"]
 
 
 # --- building recommenders -------------------------------------------------------------
@@ -179,6 +180,26 @@ def als_stage2_configs(stage1):
         {"weighting": w, "alpha": a, "factors": int(best["factors"]), "reg": reg}
         for w in ALS_WEIGHTINGS for a in ALS_ALPHAS for reg in neighbouring_regs(best["reg"])
     ]
+
+
+def reg_extensions(grid, keys=ALS_KEYS):
+    """For each weighting's best setting whose lambda is the smallest or largest tried next to it,
+    the setting one grid lambda further out (empty once every best lambda is inside its range)."""
+    grid = grid.reset_index(drop=True)
+    others = [k for k in keys if k != "reg"]
+    configs = []
+    for _, part in grid.groupby("weighting", sort=False):
+        best = part.loc[part[f"ndcg@{K}"].idxmax()]
+        tried = sorted(part[(part[others] == best[others]).all(axis=1)]["reg"].unique())
+        i = ALS_REGS.index(float(best["reg"]))
+        steps = [i - 1] if best["reg"] == tried[0] else []
+        steps += [i + 1] if best["reg"] == tried[-1] else []
+        configs += [
+            {"weighting": str(best["weighting"]), "alpha": float(best["alpha"]),
+             "factors": int(best["factors"]), "reg": ALS_REGS[j]}
+            for j in steps if 0 <= j < len(ALS_REGS)
+        ]
+    return configs
 
 
 # --- choosing settings ------------------------------------------------------------------
