@@ -3,7 +3,8 @@ choose settings with one rule for every method, and cache slow grids as CSV file
 
 The tuning grids take hours, so every finished setting is appended to results/<grid>.csv and
 skipped on the next run; delete a file (or set RECOMMENDER_RESULTS to an empty folder) to
-recompute it.
+recompute it. A grid file is keyed by the settings in each row only, so delete it after changing
+the code, the data filter or ITERATIONS.
 """
 
 import json
@@ -183,12 +184,13 @@ def als_stage2_configs(stage1):
 
 
 def reg_extensions(grid, keys=ALS_KEYS):
-    """For each weighting's best setting whose lambda is the smallest or largest tried next to it,
-    the setting one grid lambda further out (empty once every best lambda is inside its range)."""
+    """For each (weighting, alpha), take its best setting; if that lambda is the smallest or largest
+    tried next to it, return the setting one grid lambda further out. Empty once every best lambda
+    is inside its range, so conclusions about weighting and alpha rest on tuned lambdas."""
     grid = grid.reset_index(drop=True)
     others = [k for k in keys if k != "reg"]
     configs = []
-    for _, part in grid.groupby("weighting", sort=False):
+    for _, part in grid.groupby(["weighting", "alpha"], sort=False):
         best = part.loc[part[f"ndcg@{K}"].idxmax()]
         tried = sorted(part[(part[others] == best[others]).all(axis=1)]["reg"].unique())
         i = ALS_REGS.index(float(best["reg"]))
@@ -323,15 +325,24 @@ def test_run(playtime, seed, settings, cluster_ks, caps):
 
 
 def test_runs(playtime, seeds, settings, cluster_ks, caps):
-    """Run `test_run` for every seed not cached yet; per-user NDCG is kept for the first seed."""
+    """Run `test_run` for every seed not cached yet; per-user NDCG is kept for seeds[0].
+
+    The cache is keyed by everything passed in plus the module constants that shape the results;
+    if any of them changes, all cached test results are deleted and recomputed. (Code changes
+    are not detected: delete results/test_* by hand after one.)
+    """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     names = {part: RESULTS_DIR / f"test_{part}.csv" for part in ("scores", "diversity")}
     per_user_path = RESULTS_DIR / "test_per_user_ndcg.npz"
     settings_path = RESULTS_DIR / "test_settings.json"
-    as_json = json.dumps(settings, sort_keys=True, default=float)
+    as_json = json.dumps({
+        "settings": settings, "seeds": list(seeds), "cluster_ks": list(cluster_ks), "caps": list(caps),
+        "iterations": ITERATIONS, "pcy_buckets": PCY_BUCKETS,
+        "min_players": data.MIN_PLAYERS, "min_played": data.MIN_PLAYED,
+    }, sort_keys=True, default=float)
     if not settings_path.exists() or settings_path.read_text() != as_json:
         for path in [*names.values(), per_user_path]:
-            path.unlink(missing_ok=True)  # settings changed: old test results no longer apply
+            path.unlink(missing_ok=True)  # inputs changed: old test results no longer apply
         settings_path.write_text(as_json)
 
     tables = {part: pd.read_csv(p) if p.exists() else pd.DataFrame() for part, p in names.items()}

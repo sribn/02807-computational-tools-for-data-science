@@ -78,11 +78,12 @@ def _spherical_kmeans_once(x, k, rng, max_iter):
 
 
 def _kmeans_plus_plus(x, k, rng):
-    """k-means++ seeding with the cosine distance 1 - cos (squared distance of unit vectors / 2)."""
+    """k-means++ seeding: each next centroid is drawn with probability proportional to the squared
+    distance to the nearest centroid so far. For unit vectors that is 2 (1 - cos)."""
     centroids = [x[rng.integers(x.shape[0])]]
     distance = 1.0 - x @ centroids[0]
     for _ in range(1, k):
-        weights = np.maximum(distance, 0) ** 2
+        weights = np.maximum(distance, 0)
         pick = rng.choice(x.shape[0], p=weights / weights.sum()) if weights.sum() > 0 else rng.integers(x.shape[0])
         centroids.append(x[pick])
         distance = np.minimum(distance, 1.0 - x @ x[pick])

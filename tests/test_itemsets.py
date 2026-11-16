@@ -53,7 +53,7 @@ def test_pair_hash_spreads_pairs_over_buckets(n_buckets):
 def test_apriori_finds_exactly_the_frequent_triples():
     matrix = random_baskets(seed=1)
     b = itemsets.baskets(matrix)
-    pairs = itemsets.pcy_pairs(b, min_support=10, n_buckets=1_000)
+    pairs = itemsets.pcy_pairs(b, min_support=8, n_buckets=1_000)
     triples = itemsets.apriori_triples(b, pairs, min_support=8)
 
     truth = brute_force(matrix, 3)
@@ -74,3 +74,12 @@ def test_scale_support_grows_with_basket_size_to_the_power_of_the_set_size():
     big = sp.csr_matrix(np.ones((4, 5)))  # 1.25x the entries
     assert itemsets.scale_support(100, small, big, size=2) == 156
     assert itemsets.scale_support(100, small, big, size=3) == 195
+
+
+def test_apriori_refuses_pairs_mined_at_a_higher_support():
+    # A triple can be frequent at 8 while one of its pairs has support 8 or 9, so pairs mined
+    # at 10 would silently drop it.
+    b = itemsets.baskets(random_baskets(seed=1))
+    pairs = itemsets.pcy_pairs(b, min_support=10, n_buckets=1_000)
+    with pytest.raises(ValueError):
+        itemsets.apriori_triples(b, pairs, min_support=8)

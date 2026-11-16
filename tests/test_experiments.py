@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from recommender import experiments
@@ -59,3 +60,39 @@ def test_reg_extension_steps_past_an_edge_best_lambda(monkeypatch):
     # idf's best (200) is the smallest lambda tried; none's best (300) is inside its range.
     assert configs == [{"weighting": "idf", "alpha": 3.0, "factors": 512, "reg": 100.0}]
     assert experiments.reg_extensions(pd.concat([grid, pd.DataFrame([{**configs[0], "ndcg@10": 0.2}])])) == []
+
+
+def test_reg_extension_checks_every_alpha_not_only_the_best(monkeypatch):
+    monkeypatch.setattr(experiments, "ALS_REGS", [100.0, 200.0, 300.0, 400.0])
+    grid = pd.DataFrame({"weighting": ["none"] * 6, "alpha": [3.0] * 3 + [10.0] * 3,
+                         "factors": [512] * 6, "reg": [100.0, 200.0, 300.0] * 2,
+                         "ndcg@10": [0.20, 0.30, 0.25, 0.10, 0.15, 0.29]})
+    # alpha = 10 is still rising at the largest lambda, although alpha = 3 holds the overall best.
+    assert experiments.reg_extensions(grid) == [{"weighting": "none", "alpha": 10.0, "factors": 512, "reg": 400.0}]
+
+
+def _fake_test_run(calls):
+    def run(playtime, seed, settings, cluster_ks, caps):
+        calls.append(seed)
+        scores = pd.DataFrame({"seed": [seed], "method": ["m"], "ndcg@10": [seed / 10]})
+        diversity = pd.DataFrame([{"seed": seed, "clusters": k, "cap": c} for k in cluster_ks for c in caps])
+        return scores, diversity, {"m": np.full(3, float(seed))}
+    return run
+
+
+def test_test_runs_cache_restarts_when_caps_or_seeds_change(tmp_path, monkeypatch):
+    monkeypatch.setattr(experiments, "RESULTS_DIR", tmp_path)
+    calls = []
+    monkeypatch.setattr(experiments, "test_run", _fake_test_run(calls))
+    settings = {"als": {"reg": 300.0}}
+
+    experiments.test_runs(None, [0, 1], settings, [10], [1, 2])
+    experiments.test_runs(None, [0, 1], settings, [10], [1, 2])
+    assert calls == [0, 1]  # second call is served from the cache
+
+    _, diversity, _ = experiments.test_runs(None, [0, 1], settings, [10], [1, 2, 3])
+    assert calls == [0, 1, 0, 1] and set(diversity["cap"]) == {1, 2, 3}
+
+    scores, _, per_user = experiments.test_runs(None, [1, 2], settings, [10], [1, 2, 3])
+    assert set(scores["seed"]) == {1, 2}
+    assert np.all(per_user["m"] == 1.0)  # per-user NDCG belongs to the first requested seed

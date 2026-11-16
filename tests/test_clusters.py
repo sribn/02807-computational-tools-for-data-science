@@ -73,3 +73,38 @@ def test_tag_profile_leaves_out_common_tags_that_are_under_represented():
     table = clusters.tag_profile(labels, tags, min_share=0.2, top=4).set_index("cluster")
     # Action is on half of cluster 0's games but on 75% of all games.
     assert table.loc[0, "tags (share in cluster vs overall)"] == "Puzzle (100% vs 50%)"
+
+
+class _RecordingRng:
+    """Starts k-means++ at point 0 and records the probabilities of the next pick."""
+
+    def integers(self, n):
+        return 0
+
+    def choice(self, n, p):
+        self.p = p
+        return int(np.argmax(p))
+
+
+def test_kmeans_plus_plus_picks_in_proportion_to_squared_distance():
+    x = np.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]])
+    rng = _RecordingRng()
+    clusters._kmeans_plus_plus(x, 2, rng)
+    # squared distances from point 0: 0, 2, 4
+    assert np.allclose(rng.p, [0, 1 / 3, 2 / 3])
+
+
+def test_empty_cluster_is_reseeded_with_the_worst_fitting_point():
+    # Two identical starting centroids: one cluster gets every point and the other is empty.
+    x = clusters.unit_rows(np.array([[1.0, 0.0], [1.0, 0.1], [0.0, 1.0], [0.1, 1.0]]))
+
+    class SamePoint:
+        def integers(self, n):
+            return 0
+
+        def choice(self, n, p):
+            return 0
+
+    labels, centroids, _ = clusters._spherical_kmeans_once(x, 2, SamePoint(), max_iter=10)
+    assert np.unique(labels).size == 2
+    assert labels[0] == labels[1] != labels[2] == labels[3]

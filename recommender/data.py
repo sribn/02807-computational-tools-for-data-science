@@ -16,7 +16,7 @@ import scipy.sparse as sp
 DATA_DIR = Path(__file__).resolve().parent.parent / "dataset"
 ITEMS_FILE = "australian_users_items.json.gz"
 
-MIN_PLAYERS = 50  # a game needs this many players for any method to learn something about it
+MIN_PLAYERS = 50  # players a game needs (counted before the split) for any method to learn about it
 MIN_PLAYED = 5    # users need enough played games to hide some for validation and testing
 
 
@@ -69,6 +69,10 @@ def filter_played(user_items, min_players=MIN_PLAYERS, min_played=MIN_PLAYED):
     evidence of taste, and every method is trained and scored on plays. Dropping games can
     push users below `min_played` and the other way round, so the two filters repeat until
     nothing changes. Returns the kept rows and a log of the counts after each pass.
+
+    The filters count all plays, including those later hidden for validation and testing: they
+    define which users and games are studied (as in k-core filtering), so after the split some
+    games have fewer than `min_players` training players.
     """
     played = user_items[user_items["playtime"] > 0]
     log = [_counts(played, "played entries")]

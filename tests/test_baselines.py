@@ -32,8 +32,12 @@ def test_cosine_neighbours_keep_top_k_and_no_self_similarity():
 def test_item_knn_scores_sum_similarity_of_played_games():
     train = toy_train()
     sim = baselines.cosine_neighbours(baselines.pair_counts(train), k=2)
-    scores = baselines.item_knn_scorer(train, sim)(np.array([2]))
-    assert scores[0, 1] == pytest.approx(sim[0, 1], abs=1e-6)
+    for user in range(train.shape[0]):
+        played = train[user].indices
+        assert played.size  # every toy user played something
+        scores = baselines.item_knn_scorer(train, sim)(np.array([user]))
+        expected = np.asarray(sim[played].sum(axis=0)).ravel()
+        assert np.allclose(scores[0], expected, atol=1e-6)
 
 
 def test_jaccard_is_shared_players_over_all_players():

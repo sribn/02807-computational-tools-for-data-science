@@ -3,7 +3,7 @@
 import numpy as np
 
 BATCH_SIZE = 4096  # users scored at once; keeps the score matrix to a few hundred MB
-N_BOOT = 1000      # bootstrap resamples of the test users
+N_BOOT = 10_000    # bootstrap resamples of the test users (Bonferroni tails need many)
 HEAD_SHARE = 0.2   # the most-played 20% of games count as the "head", the rest as the long tail
 
 

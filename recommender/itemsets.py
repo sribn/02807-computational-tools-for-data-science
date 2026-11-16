@@ -94,6 +94,9 @@ def bucket_saturation(basket_matrix, min_support, bucket_sizes):
 
 def apriori_triples(basket_matrix, pairs, min_support):
     """Apriori step k = 3: count only triples whose three sub-pairs are frequent."""
+    if pairs.min_support > min_support:
+        raise ValueError(f"pairs were mined at support {pairs.min_support}; triples at {min_support} "
+                         "need pairs mined at that support or lower")
     n = basket_matrix.shape[1]
     keys = _triangles(pairs.frequent)  # sorted keys (a * n + b) * n + c with a < b < c
     support = _count_triples(basket_matrix.indptr, basket_matrix.indices, pairs.frequent, keys, n)
