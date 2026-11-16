@@ -1,4 +1,8 @@
-"""Load the Steam inventories and turn them into a sparse user x game playtime matrix."""
+"""Load the Steam inventories and turn them into a sparse user x game playtime matrix.
+
+This is the one data definition shared by every method (ALS, Apriori/PCY rules, item-kNN),
+so all of them see the same users, games and train/validation/test split.
+"""
 
 import ast
 import gzip
@@ -12,8 +16,8 @@ import scipy.sparse as sp
 DATA_DIR = Path(__file__).resolve().parent.parent / "dataset"
 ITEMS_FILE = "australian_users_items.json.gz"
 
-MIN_OWNERS = 50  # same threshold as the Apriori/PCY baskets in steam_cleaning.ipynb
-MIN_PLAYED = 5   # users need enough played games to hide 20% for testing
+MIN_PLAYERS = 50  # a game needs this many players for any method to learn something about it
+MIN_PLAYED = 5    # users need enough played games to hide some for validation and testing
 
 
 @dataclass(frozen=True)
@@ -24,10 +28,11 @@ class Interactions:
     user_ids: np.ndarray
     item_ids: np.ndarray
     item_names: dict
+    filter_log: pd.DataFrame  # users / games / played pairs after each filtering pass
 
 
-def load_user_items(path=DATA_DIR / ITEMS_FILE):
-    """Return one row per (user, game) with playtime in minutes, duplicates removed."""
+def read_user_items(path=DATA_DIR / ITEMS_FILE):
+    """Return one row per (user, game) entry in the raw file, duplicates included."""
     rows = []
     with gzip.open(path, "rt", encoding="utf-8") as f:
         for line in f:
@@ -36,25 +41,54 @@ def load_user_items(path=DATA_DIR / ITEMS_FILE):
             record = ast.literal_eval(line)
             for item in record["items"]:
                 rows.append((record["user_id"], item["item_id"], item["item_name"], item["playtime_forever"]))
-
-    df = pd.DataFrame(rows, columns=["user_id", "item_id", "item_name", "playtime"])
-    # The raw file repeats some users with identical inventories (see steam_cleaning.ipynb).
-    return df.drop_duplicates(subset=["user_id", "item_id"], ignore_index=True)
+    return pd.DataFrame(rows, columns=["user_id", "item_id", "item_name", "playtime"])
 
 
-def build_interactions(user_items, min_owners=MIN_OWNERS, min_played=MIN_PLAYED):
-    """Keep popular games and active users, and only count games that were actually played.
+def deduplicate(user_items):
+    """Keep one row per (user, game).
 
-    Owned-but-unplayed games are treated like not owned: bundles and sales make
-    ownership alone weak evidence of interest.
+    The raw file repeats some users; a few repeated entries disagree on playtime, and we keep
+    the largest, since playtime_forever only grows over time.
     """
-    owners = user_items.groupby("item_id")["user_id"].nunique()
-    popular = owners.index[owners >= min_owners]
+    return (
+        user_items.sort_values("playtime", ascending=False, kind="stable")
+        .drop_duplicates(subset=["user_id", "item_id"])
+        .sort_values(["user_id", "item_id"], ignore_index=True)
+    )
 
-    played = user_items[user_items["item_id"].isin(popular) & (user_items["playtime"] > 0)]
-    played_per_user = played.groupby("user_id")["item_id"].size()
-    active = played_per_user.index[played_per_user >= min_played]
-    played = played[played["user_id"].isin(active)]
+
+def load_user_items(path=DATA_DIR / ITEMS_FILE):
+    """Raw entries with duplicates removed."""
+    return deduplicate(read_user_items(path))
+
+
+def filter_played(user_items, min_players=MIN_PLAYERS, min_played=MIN_PLAYED):
+    """Keep played entries of games with enough players and users with enough played games.
+
+    Owned-but-unplayed games count as absent: bundles and giveaways make ownership weak
+    evidence of taste, and every method is trained and scored on plays. Dropping games can
+    push users below `min_played` and the other way round, so the two filters repeat until
+    nothing changes. Returns the kept rows and a log of the counts after each pass.
+    """
+    played = user_items[user_items["playtime"] > 0]
+    log = [_counts(played, "played entries")]
+
+    for n_pass in range(1, 100):
+        players = played.groupby("item_id")["user_id"].size()
+        played = played[played["item_id"].isin(players.index[players >= min_players])]
+        games_per_user = played.groupby("user_id")["item_id"].size()
+        kept = played[played["user_id"].isin(games_per_user.index[games_per_user >= min_played])]
+        log.append(_counts(kept, f"filter pass {n_pass}"))
+        if len(kept) == len(played):
+            break
+        played = kept
+
+    return kept.reset_index(drop=True), pd.DataFrame(log).set_index("step")
+
+
+def build_interactions(user_items, min_players=MIN_PLAYERS, min_played=MIN_PLAYED):
+    """Filter the entries (see `filter_played`) and build the sparse playtime matrix."""
+    played, log = filter_played(user_items, min_players, min_played)
 
     user_codes, user_ids = pd.factorize(played["user_id"], sort=True)
     item_codes, item_ids = pd.factorize(played["item_id"], sort=True)
@@ -62,10 +96,13 @@ def build_interactions(user_items, min_owners=MIN_OWNERS, min_played=MIN_PLAYED)
         (played["playtime"].to_numpy(dtype=np.float64), (user_codes, item_codes)),
         shape=(len(user_ids), len(item_ids)),
     )
-    item_names = (
-        played.drop_duplicates("item_id").set_index("item_id")["item_name"].to_dict()
-    )
-    return Interactions(playtime, np.asarray(user_ids), np.asarray(item_ids), item_names)
+    item_names = played.drop_duplicates("item_id").set_index("item_id")["item_name"].to_dict()
+    return Interactions(playtime, np.asarray(user_ids), np.asarray(item_ids), item_names, log)
+
+
+def players_per_game(matrix):
+    """Number of users with a stored entry for each game (column)."""
+    return np.diff(matrix.tocsc().indptr)
 
 
 def split_per_user(matrix, test_frac=0.2, seed=0):
@@ -86,6 +123,15 @@ def split_per_user(matrix, test_frac=0.2, seed=0):
         is_test[start + rng.choice(n, size=n_test, replace=False)] = True
 
     return _keep_entries(matrix, ~is_test), _keep_entries(matrix, is_test)
+
+
+def _counts(played, step):
+    return {
+        "step": step,
+        "users": played["user_id"].nunique(),
+        "games": played["item_id"].nunique(),
+        "played pairs": len(played),
+    }
 
 
 def _keep_entries(matrix, mask):
