@@ -32,12 +32,26 @@ Then open and run the notebook:
 ```bash
 jupyter notebook steam_cleaning.ipynb
 ```
-## Recommender prototype (ALS)
+## Recommender (ALS against course methods)
 
-`recommender.ipynb` trains an implicit-feedback ALS model (Hu, Koren & Volinsky, 2008) on the user inventories and compares it with a popularity baseline. The model code is in `recommender/` and is tested in `tests/`.
+`recommender.ipynb` compares implicit-feedback ALS (Hu, Koren & Volinsky, 2008; our outside-the-course method, implemented from scratch) with course-method recommenders: association rules from frequent itemsets (PCY pairs, Apriori triples), item-item similarity, and popularity. It also clusters the learned game vectors with spherical k-means and uses the clusters to diversify the recommendation lists.
+
+| Path | Contents |
+|---|---|
+| `recommender/data.py` | shared data definition: played games, filters, train/validation/test split |
+| `recommender/itemsets.py`, `recommender/rules.py` | PCY and Apriori, association-rule recommender |
+| `recommender/baselines.py` | item-kNN (cosine or Jaccard) |
+| `recommender/als.py` | implicit-feedback ALS (NumPy + Numba), sparse loss |
+| `recommender/evaluate.py` | top-k lists, ranking metrics, bootstrap intervals, diversity measures |
+| `recommender/clusters.py`, `recommender/diversify.py` | spherical k-means, tag comparison, cluster-capped lists |
+| `recommender/experiments.py` | tuning grids, the one-SE selection rule, cached test runs |
+| `results/` | cached tuning grids and test runs (delete a file to recompute it) |
+| `figures/` | figures and the test-results table for the report |
 
 ```bash
 python -m pip install -r requirements-recommender.txt
 python -m pytest
 jupyter notebook recommender.ipynb
 ```
+
+Run the notebook from the repository root. With the cached `results/` it takes about 15 minutes; recomputing everything takes several hours on a 12-core laptop.
