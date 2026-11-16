@@ -35,6 +35,7 @@ ALS_MAX_FACTORS = 512                      # compute cap, tried only near the be
 ALS_REGS = [30.0, 100.0, 200.0, 250.0, 300.0, 375.0, 450.0, 700.0, 1000.0, 1500.0, 3000.0]
 ALS_SMALL_REGS = [1.0, 10.0]               # shows what happens without strong regularisation
 ALS_ALPHAS = [1.0, 3.0, 10.0]
+ALS_ALPHA_STEPS = [0.3, 1.0, 3.0, 10.0, 30.0, 100.0]  # alpha values an edge extension can step to
 ALS_WEIGHTINGS = ["none", "idf"]
 ALS_KEYS = ["weighting", "alpha", "factors", "reg"]
 
@@ -204,6 +205,25 @@ def reg_extensions(grid, keys=ALS_KEYS):
     return configs
 
 
+def alpha_extensions(grid, keys=ALS_KEYS):
+    """For each weighting, the best alpha over all lambdas (at that weighting's best number of
+    factors); if it is the smallest or largest alpha tried, return the next alpha further out at
+    the lambdas around the best one. `reg_extensions` then tunes lambda for the new alpha."""
+    grid = grid.reset_index(drop=True)
+    configs = []
+    for weighting, part in grid.groupby("weighting", sort=False):
+        best = part.loc[part[f"ndcg@{K}"].idxmax()]
+        tried = sorted(part[part["factors"] == best["factors"]]["alpha"].unique())
+        i = ALS_ALPHA_STEPS.index(float(best["alpha"]))
+        steps = [i - 1] if best["alpha"] == tried[0] else []
+        steps += [i + 1] if best["alpha"] == tried[-1] else []
+        configs += [
+            {"weighting": str(weighting), "alpha": ALS_ALPHA_STEPS[j], "factors": int(best["factors"]), "reg": reg}
+            for j in steps if 0 <= j < len(ALS_ALPHA_STEPS) for reg in neighbouring_regs(best["reg"])
+        ]
+    return configs
+
+
 # --- choosing settings ------------------------------------------------------------------
 
 def one_se_choice(grid, simplicity, metric=f"ndcg@{K}"):
@@ -219,16 +239,18 @@ def one_se_choice(grid, simplicity, metric=f"ndcg@{K}"):
     return within.sort_values(columns, ascending=ascending).iloc[0], best
 
 
-def edge_check(grid, best, keys, ordinal, natural_bounds=None):
+def edge_check(grid, best, keys, ordinal, natural_bounds=None, free=None):
     """For each ordinal setting, is the best value at the edge of what was tried around it?
 
-    Only rows that match `best` on every other setting count as its neighbours. Values in
-    `natural_bounds` (e.g. "all neighbours", a stated compute cap) are allowed edges.
+    Only rows that match `best` on every other setting count as its neighbours, except settings
+    listed in `free` for that axis (e.g. {"alpha": ["reg"]}: every alpha counts, whatever its
+    lambda, because lambda is tuned per alpha). Values in `natural_bounds` (e.g. "all
+    neighbours", a stated compute cap) are allowed edges.
     """
-    natural_bounds = natural_bounds or {}
+    natural_bounds, free = natural_bounds or {}, free or {}
     rows = []
     for axis in ordinal:
-        others = [k for k in keys if k != axis]
+        others = [k for k in keys if k != axis and k not in free.get(axis, ())]
         line = grid[(grid[others] == best[others]).all(axis=1)]
         tried = sorted(line[axis].unique())
         at_edge = len(tried) > 1 and best[axis] in (tried[0], tried[-1])

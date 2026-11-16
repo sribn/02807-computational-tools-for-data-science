@@ -71,6 +71,27 @@ def test_reg_extension_checks_every_alpha_not_only_the_best(monkeypatch):
     assert experiments.reg_extensions(grid) == [{"weighting": "none", "alpha": 10.0, "factors": 512, "reg": 400.0}]
 
 
+def test_alpha_extension_steps_past_an_edge_best_alpha(monkeypatch):
+    monkeypatch.setattr(experiments, "ALS_REGS", [100.0, 200.0, 300.0, 400.0])
+    monkeypatch.setattr(experiments, "ALS_ALPHA_STEPS", [1.0, 3.0, 10.0, 30.0])
+    grid = pd.DataFrame({"weighting": ["none"] * 4, "alpha": [3.0, 3.0, 10.0, 10.0], "factors": [512] * 4,
+                         "reg": [100.0, 200.0, 200.0, 300.0], "ndcg@10": [0.20, 0.25, 0.26, 0.28]})
+    # The best alpha (10, at lambda 300) is the largest tried: try alpha = 30 around lambda 300.
+    assert experiments.alpha_extensions(grid) == [
+        {"weighting": "none", "alpha": 30.0, "factors": 512, "reg": r} for r in (200.0, 300.0, 400.0)]
+    worse = pd.DataFrame({"weighting": ["none"], "alpha": [30.0], "factors": [512], "reg": [300.0], "ndcg@10": [0.27]})
+    assert experiments.alpha_extensions(pd.concat([grid, worse])) == []
+
+
+def test_edge_check_can_compare_alphas_across_their_own_lambdas():
+    grid = pd.DataFrame({"alpha": [3.0, 10.0], "reg": [200.0, 375.0], "ndcg@10": [0.25, 0.26]})
+    best = grid.loc[grid["ndcg@10"].idxmax()]
+    fixed = experiments.edge_check(grid, best, ["alpha", "reg"], ["alpha"]).set_index("setting")
+    free = experiments.edge_check(grid, best, ["alpha", "reg"], ["alpha"], free={"alpha": ["reg"]}).set_index("setting")
+    assert not bool(fixed.loc["alpha", "at edge"])  # no other alpha at lambda 375
+    assert bool(free.loc["alpha", "at edge"]) and free.loc["alpha", "tried"] == [3.0, 10.0]
+
+
 def _fake_test_run(calls):
     def run(playtime, seed, settings, cluster_ks, caps):
         calls.append(seed)
