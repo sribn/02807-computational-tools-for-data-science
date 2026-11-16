@@ -26,16 +26,39 @@ def pair_counts(train):
     return (b.T @ b).toarray().astype(np.float32)
 
 
+SIMILARITIES = ("cosine", "jaccard")
+
+
+def item_similarity(counts, measure="cosine"):
+    """Similarity of every pair of games' player sets, from the co-play counts.
+
+    cosine:  |A and B| / sqrt(|A| |B|)
+    jaccard: |A and B| / |A or B|  (the similar-items measure from the course)
+    """
+    support = np.maximum(np.diag(counts), 1)
+    if measure == "cosine":
+        sim = counts / np.sqrt(support)[:, None] / np.sqrt(support)[None, :]
+    elif measure == "jaccard":
+        sim = counts / (support[:, None] + support[None, :] - counts)
+    else:
+        raise ValueError(f"measure must be one of {SIMILARITIES}, got {measure!r}")
+    np.fill_diagonal(sim, 0.0)
+    return sim
+
+
+def nearest_neighbours(sim, k=50):
+    """Keep each game's k most similar games (all of them if k is None)."""
+    if k is None or k >= sim.shape[1]:
+        return sim
+    drop = np.argpartition(-sim, k, axis=1)[:, k:]
+    pruned = sim.copy()
+    np.put_along_axis(pruned, drop, 0.0, axis=1)
+    return pruned
+
+
 def cosine_neighbours(counts, k=50):
     """Item-item cosine similarity of the played vectors, keeping each game's top-k neighbours."""
-    support = np.sqrt(np.maximum(np.diag(counts), 1))
-    sim = counts / support[:, None] / support[None, :]
-    np.fill_diagonal(sim, 0.0)
-    if k < sim.shape[1]:
-        drop = np.argpartition(-sim, k, axis=1)[:, k:]
-        sim = sim.copy()
-        np.put_along_axis(sim, drop, 0.0, axis=1)
-    return sim
+    return nearest_neighbours(item_similarity(counts, "cosine"), k)
 
 
 def item_knn_scorer(train, sim):
