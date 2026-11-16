@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import scipy.sparse as sp
 
 from recommender import als
@@ -37,6 +38,39 @@ def test_solve_rows_matches_dense_closed_form():
         cu = np.diag(dense_c[u])
         expected = np.linalg.solve(items.T @ cu @ items + reg * np.eye(3), items.T @ cu @ dense_p[u])
         assert np.allclose(users[u], expected)
+
+
+def dense_loss(conf, model, reg):
+    """Reference objective over every cell of the dense matrix."""
+    dense_c = np.ones(conf.shape)
+    dense_p = np.zeros(conf.shape)
+    coo = conf.tocoo()
+    dense_c[coo.row, coo.col] = coo.data
+    dense_p[coo.row, coo.col] = 1.0
+    err = dense_p - model.user_factors @ model.item_factors.T
+    penalty = (model.user_factors ** 2).sum() + (model.item_factors ** 2).sum()
+    return float((dense_c * err ** 2).sum() + reg * penalty)
+
+
+def test_sparse_loss_matches_dense_objective():
+    rng = np.random.default_rng(2)
+    conf = als.confidence(block_playtime(), alpha=5.0)
+    model = als.ALSModel(rng.normal(size=(8, 3)), rng.normal(size=(6, 3)))
+    assert als.loss(conf, model, 0.7) == pytest.approx(dense_loss(conf, model, 0.7), rel=1e-12)
+
+
+def test_solve_rows_matches_the_implicit_library():
+    implicit_als = pytest.importorskip("implicit.cpu.als")
+    rng = np.random.default_rng(4)
+    conf = als.confidence(block_playtime(), alpha=5.0)
+    items = rng.normal(size=(6, 3))
+    reg = 0.5
+
+    ours = als.solve_rows(conf, items, reg)
+    # implicit reads every stored value as the confidence itself, so we hand it ours.
+    for u in range(conf.shape[0]):
+        theirs = implicit_als.user_factor(items, items.T @ items, conf, u, reg, 3)
+        assert np.allclose(ours[u], theirs, atol=1e-12)
 
 
 def test_loss_never_increases():
