@@ -11,6 +11,8 @@ This project explores Steam game, review, and user-inventory data. The notebook 
 
 The notebook reads the compressed JSON files directly from `dataset/`; they do not need to be extracted.
 
+The data are the Australian Steam data sets from Julian McAuley's group at UCSD (https://cseweb.ucsd.edu/~jmcauley/datasets.html). The dataset page asks users to cite: Kang & McAuley, "Self-attentive sequential recommendation" (ICDM 2018); Wan & McAuley, "Item recommendation on monotonic behavior chains" (RecSys 2018); Pathak, Gupta & McAuley, "Generating and personalizing bundle recommendations on Steam" (SIGIR 2017).
+
 ## Notebook Workflow
 
 - Inspect the three raw datasets and compare their schemas.
@@ -18,14 +20,17 @@ The notebook reads the compressed JSON files directly from `dataset/`; they do n
 - Clean game sentiment and prices, fill missing publisher and developer names, and remove selected columns and incomplete rows.
 - Check duplicate identifiers and inspect examples from the datasets.
 - Plot the most common game tags and the most frequently listed games in user inventories.
+- Frequent itemsets (course method): mine frequent pairs (PCY) and triples (Apriori) from the played-game baskets with the shared code in `recommender/`, and check whether the PCY bitmap saves memory at this scale.
 
 ## Run
 
 Use Python 3 from the repository root so the relative `dataset/` path resolves. Install the notebook dependencies:
 
 ```bash
-python -m pip install pandas matplotlib notebook
+python -m pip install -r requirements-recommender.txt
 ```
+
+(The frequent-itemsets section imports the `recommender` package, which needs NumPy, SciPy and Numba; the requirements file covers both notebooks.)
 
 Then open and run the notebook:
 
@@ -54,4 +59,4 @@ python -m pytest
 jupyter notebook recommender.ipynb
 ```
 
-Run the notebook from the repository root. With the cached `results/` it takes about 15 minutes; recomputing everything takes several hours on a 12-core laptop.
+Run the notebook from the repository root. With the cached `results/` it takes about 14 minutes; recomputing everything takes several hours, mostly the 512-factor ALS fits at about 6 minutes each.
