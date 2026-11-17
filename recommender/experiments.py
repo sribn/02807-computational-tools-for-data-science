@@ -158,10 +158,16 @@ def als_stage1_configs():
     return grid + small
 
 
+def reg_ladder():
+    """Every lambda of the grids, small ones included, in increasing order."""
+    return sorted(set(ALS_SMALL_REGS) | set(ALS_REGS))
+
+
 def neighbouring_regs(reg, below=1, above=1):
     """The grid's lambda values around `reg`."""
-    i = ALS_REGS.index(float(reg))
-    return ALS_REGS[max(0, i - below): i + above + 1]
+    ladder = reg_ladder()
+    i = ladder.index(float(reg))
+    return ladder[max(0, i - below): i + above + 1]
 
 
 def als_cap_configs(stage1):
@@ -184,25 +190,27 @@ def als_stage2_configs(stage1):
     ]
 
 
-def reg_extensions(grid, keys=ALS_KEYS):
-    """For each (weighting, alpha), take its best setting; if that lambda is the smallest or largest
-    tried next to it, return the setting one grid lambda further out. Empty once every best lambda
-    is inside its range, so conclusions about weighting and alpha rest on tuned lambdas."""
+def reg_extensions(grid, keys=ALS_KEYS, chosen=()):
+    """For each (weighting, alpha), take its best setting, plus any `chosen` settings (the one-SE
+    picks); if that lambda is the smallest or largest tried next to it, return the setting one grid
+    lambda further out. Empty once every such lambda is inside its range, so conclusions about
+    weighting and alpha rest on tuned lambdas and the one-SE rule saw the lambdas past its pick."""
     grid = grid.reset_index(drop=True)
     others = [k for k in keys if k != "reg"]
+    anchors = [part.loc[part[f"ndcg@{K}"].idxmax()] for _, part in grid.groupby(["weighting", "alpha"], sort=False)]
+    ladder = reg_ladder()
     configs = []
-    for _, part in grid.groupby(["weighting", "alpha"], sort=False):
-        best = part.loc[part[f"ndcg@{K}"].idxmax()]
-        tried = sorted(part[(part[others] == best[others]).all(axis=1)]["reg"].unique())
-        i = ALS_REGS.index(float(best["reg"]))
-        steps = [i - 1] if best["reg"] == tried[0] else []
-        steps += [i + 1] if best["reg"] == tried[-1] else []
+    for anchor in [*anchors, *chosen]:
+        tried = sorted(grid[(grid[others] == anchor[others]).all(axis=1)]["reg"].unique())
+        i = ladder.index(float(anchor["reg"]))
+        steps = [i - 1] if anchor["reg"] == tried[0] else []
+        steps += [i + 1] if anchor["reg"] == tried[-1] else []
         configs += [
-            {"weighting": str(best["weighting"]), "alpha": float(best["alpha"]),
-             "factors": int(best["factors"]), "reg": ALS_REGS[j]}
-            for j in steps if 0 <= j < len(ALS_REGS)
+            {"weighting": str(anchor["weighting"]), "alpha": float(anchor["alpha"]),
+             "factors": int(anchor["factors"]), "reg": ladder[j]}
+            for j in steps if 0 <= j < len(ladder)
         ]
-    return configs
+    return [c for i, c in enumerate(configs) if c not in configs[:i]]
 
 
 def alpha_extensions(grid, keys=ALS_KEYS):
@@ -233,7 +241,8 @@ def one_se_choice(grid, simplicity, metric=f"ndcg@{K}"):
     higher score. Returns (chosen row, best row).
     """
     best = grid.loc[grid[metric].idxmax()]
-    within = grid[grid[metric] >= best[metric] - best["ndcg_se"]]
+    se = metric.split("@")[0] + "_se"  # e.g. ndcg@10 -> ndcg_se
+    within = grid[grid[metric] >= best[metric] - best[se]]
     columns = [c for c, _ in simplicity] + [metric]
     ascending = [a for _, a in simplicity] + [False]
     return within.sort_values(columns, ascending=ascending).iloc[0], best
@@ -241,6 +250,7 @@ def one_se_choice(grid, simplicity, metric=f"ndcg@{K}"):
 
 def edge_check(grid, best, keys, ordinal, natural_bounds=None, free=None):
     """For each ordinal setting, is the best value at the edge of what was tried around it?
+    (A value with no neighbours tried counts as at the edge.)
 
     Only rows that match `best` on every other setting count as its neighbours, except settings
     listed in `free` for that axis (e.g. {"alpha": ["reg"]}: every alpha counts, whatever its
@@ -253,7 +263,7 @@ def edge_check(grid, best, keys, ordinal, natural_bounds=None, free=None):
         others = [k for k in keys if k != axis and k not in free.get(axis, ())]
         line = grid[(grid[others] == best[others]).all(axis=1)]
         tried = sorted(line[axis].unique())
-        at_edge = len(tried) > 1 and best[axis] in (tried[0], tried[-1])
+        at_edge = best[axis] in (tried[0], tried[-1])
         allowed = best[axis] in natural_bounds.get(axis, ())
         rows.append({"setting": axis, "best": best[axis], "tried": tried,
                      "at edge": at_edge, "allowed edge": allowed})

@@ -40,6 +40,7 @@ def test_edge_check_flags_a_best_value_at_the_end_of_its_range():
     table = experiments.edge_check(grid, best, ["factors", "reg"], ["factors", "reg"]).set_index("setting")
     assert bool(table.loc["factors", "at edge"])
     assert table.loc["reg", "tried"] == [300.0]  # no lambda neighbours at 256 factors
+    assert bool(table.loc["reg", "at edge"])  # an untested direction counts as an edge
 
 
 def test_stage2_works_on_concatenated_grids_with_repeated_row_labels(monkeypatch):
@@ -71,6 +72,24 @@ def test_reg_extension_checks_every_alpha_not_only_the_best(monkeypatch):
     assert experiments.reg_extensions(grid) == [{"weighting": "none", "alpha": 10.0, "factors": 512, "reg": 400.0}]
 
 
+def test_reg_extension_also_checks_the_one_se_pick(monkeypatch):
+    monkeypatch.setattr(experiments, "ALS_REGS", [100.0, 200.0, 300.0, 400.0])
+    grid = pd.DataFrame({"weighting": ["none"] * 3, "alpha": [3.0] * 3, "factors": [512] * 3,
+                         "reg": [100.0, 200.0, 300.0], "ndcg@10": [0.20, 0.30, 0.295]})
+    assert experiments.reg_extensions(grid) == []  # the best (200) is inside its range
+    pick = grid.iloc[2]  # but a one-SE pick at the largest lambda tried needs the next lambda
+    assert experiments.reg_extensions(grid, chosen=[pick]) == [
+        {"weighting": "none", "alpha": 3.0, "factors": 512, "reg": 400.0}]
+
+
+def test_reg_extension_steps_through_the_small_lambdas(monkeypatch):
+    monkeypatch.setattr(experiments, "ALS_REGS", [30.0, 100.0])
+    monkeypatch.setattr(experiments, "ALS_SMALL_REGS", [1.0, 10.0])
+    grid = pd.DataFrame({"weighting": ["none"] * 2, "alpha": [3.0] * 2, "factors": [128] * 2,
+                         "reg": [10.0, 30.0], "ndcg@10": [0.30, 0.20]})
+    assert experiments.reg_extensions(grid) == [{"weighting": "none", "alpha": 3.0, "factors": 128, "reg": 1.0}]
+
+
 def test_alpha_extension_steps_past_an_edge_best_alpha(monkeypatch):
     monkeypatch.setattr(experiments, "ALS_REGS", [100.0, 200.0, 300.0, 400.0])
     monkeypatch.setattr(experiments, "ALS_ALPHA_STEPS", [1.0, 3.0, 10.0, 30.0])
@@ -88,7 +107,7 @@ def test_edge_check_can_compare_alphas_across_their_own_lambdas():
     best = grid.loc[grid["ndcg@10"].idxmax()]
     fixed = experiments.edge_check(grid, best, ["alpha", "reg"], ["alpha"]).set_index("setting")
     free = experiments.edge_check(grid, best, ["alpha", "reg"], ["alpha"], free={"alpha": ["reg"]}).set_index("setting")
-    assert not bool(fixed.loc["alpha", "at edge"])  # no other alpha at lambda 375
+    assert fixed.loc["alpha", "tried"] == [10.0]  # no other alpha at lambda 375
     assert bool(free.loc["alpha", "at edge"]) and free.loc["alpha", "tried"] == [3.0, 10.0]
 
 

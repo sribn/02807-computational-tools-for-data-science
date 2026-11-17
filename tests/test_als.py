@@ -70,7 +70,7 @@ def test_solve_rows_matches_the_implicit_library():
     # implicit reads every stored value as the confidence itself, so we hand it ours.
     for u in range(conf.shape[0]):
         theirs = implicit_als.user_factor(items, items.T @ items, conf, u, reg, 3)
-        assert np.allclose(ours[u], theirs, atol=1e-12)
+        assert np.allclose(ours[u], theirs, rtol=0, atol=1e-12)
 
 
 def test_loss_never_increases():
