@@ -384,7 +384,7 @@ def test_runs(playtime, seeds, settings, cluster_ks, caps):
 
     tables = {part: pd.read_csv(p) if p.exists() else pd.DataFrame() for part, p in names.items()}
     for seed in seeds:
-        done = len(tables["scores"]) and seed in set(tables["scores"]["seed"])
+        done = all(len(t) and seed in set(t["seed"]) for t in tables.values())  # in both tables
         if done and (seed != seeds[0] or per_user_path.exists()):
             continue
         scores, diversity, per_user = test_run(playtime, seed, settings, cluster_ks, caps)

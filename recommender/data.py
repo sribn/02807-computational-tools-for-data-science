@@ -110,7 +110,8 @@ def players_per_game(matrix):
 
 
 def split_per_user(matrix, test_frac=0.2, seed=0):
-    """Hide a random `test_frac` of each user's games (at least one) as the test set.
+    """Hide a random `test_frac` of each user's games (at least one, for users with two or more)
+    as the test set.
 
     Returns new (train, test) CSR matrices; every stored entry lands in exactly one of them.
     """

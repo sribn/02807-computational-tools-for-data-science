@@ -156,6 +156,16 @@ def _fake_test_run(calls):
     return run
 
 
+def test_test_runs_recompute_a_deleted_diversity_table(tmp_path, monkeypatch):
+    monkeypatch.setattr(experiments, "RESULTS_DIR", tmp_path)
+    calls = []
+    monkeypatch.setattr(experiments, "test_run", _fake_test_run(calls))
+    experiments.test_runs(None, [0, 1], {"als": {"reg": 300.0}}, [10], [1])
+    (tmp_path / "test_diversity.csv").unlink()
+    _, diversity, _ = experiments.test_runs(None, [0, 1], {"als": {"reg": 300.0}}, [10], [1])
+    assert calls == [0, 1, 0, 1] and set(diversity["seed"]) == {0, 1}
+
+
 def test_test_runs_cache_restarts_when_caps_or_seeds_change(tmp_path, monkeypatch):
     monkeypatch.setattr(experiments, "RESULTS_DIR", tmp_path)
     calls = []
