@@ -37,7 +37,7 @@ Then open and run the notebook:
 ```bash
 jupyter notebook steam_cleaning.ipynb
 ```
-## Recommender (ALS against course methods and baselines)
+## Recommender (ALS against a course method and baselines)
 
 `recommender.ipynb` compares implicit-feedback ALS (Hu, Koren & Volinsky, 2008; our outside-the-course method, implemented from scratch) with the course method association rules from frequent itemsets (PCY pairs, Apriori triples) and two baselines, item-item similarity and popularity. It also clusters the learned game vectors with spherical k-means and uses the clusters to diversify the recommendation lists.
 
