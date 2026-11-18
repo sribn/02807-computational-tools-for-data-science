@@ -111,6 +111,42 @@ def test_edge_check_can_compare_alphas_across_their_own_lambdas():
     assert bool(free.loc["alpha", "at edge"]) and free.loc["alpha", "tried"] == [3.0, 10.0]
 
 
+def test_alpha_extension_also_checks_the_one_se_pick(monkeypatch):
+    monkeypatch.setattr(experiments, "ALS_REGS", [100.0, 200.0, 300.0])
+    monkeypatch.setattr(experiments, "ALS_ALPHA_STEPS", [1.0, 3.0, 10.0])
+    grid = pd.DataFrame({"weighting": ["none"] * 2, "alpha": [3.0, 10.0], "factors": [512] * 2,
+                         "reg": [200.0, 200.0], "ndcg@10": [0.295, 0.30]})
+    pick = grid.iloc[0]  # the one-SE rule prefers the smaller alpha, which is the smallest tried
+    assert {c["alpha"] for c in experiments.alpha_extensions(grid, chosen=[pick])} == {1.0}
+
+
+def test_als_simplicity_order_is_factors_then_smaller_alpha_then_larger_lambda():
+    grid = pd.DataFrame({"factors": [512, 512, 512, 256], "alpha": [10.0, 3.0, 3.0, 3.0],
+                         "reg": [450.0, 200.0, 300.0, 300.0], "ndcg@10": [0.300, 0.2995, 0.2992, 0.250],
+                         "ndcg_se": [0.001] * 4})
+    chosen, _ = experiments.one_se_choice(grid, [("factors", True), ("alpha", True), ("reg", False)])
+    # 256 factors is too far below; among the rest the smaller alpha wins over the larger lambda.
+    assert (chosen["alpha"], chosen["reg"]) == (3.0, 300.0)
+
+
+def test_extra_test_ndcg_is_cached_per_settings(tmp_path, monkeypatch):
+    import scipy.sparse as sp
+    monkeypatch.setattr(experiments, "RESULTS_DIR", tmp_path)
+    calls = []
+
+    def fake(train_full, test, cfg, seed):
+        calls.append(cfg["reg"])
+        return np.full(train_full.shape[0], cfg["reg"])
+    monkeypatch.setattr(experiments, "_als_test_ndcg", fake)
+    playtime = sp.csr_matrix(np.ones((4, 6)))
+    cfg = {"weighting": "none", "alpha": 3.0, "factors": 8, "reg": 1.0}
+    first = experiments.extra_test_ndcg(playtime, 0, {"a": cfg})
+    experiments.extra_test_ndcg(playtime, 0, {"a": cfg})
+    assert calls == [1.0] and list(first["a"]) == [1.0] * 4
+    experiments.extra_test_ndcg(playtime, 0, {"a": {**cfg, "factors": 16}})
+    assert calls == [1.0, 1.0]  # a different setting is a different cache file
+
+
 def _fake_test_run(calls):
     def run(playtime, seed, settings, cluster_ks, caps):
         calls.append(seed)

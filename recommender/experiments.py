@@ -7,6 +7,7 @@ recompute it. A grid file is keyed by the settings in each row only, so delete i
 the code, the data filter or ITERATIONS.
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -213,23 +214,26 @@ def reg_extensions(grid, keys=ALS_KEYS, chosen=()):
     return [c for i, c in enumerate(configs) if c not in configs[:i]]
 
 
-def alpha_extensions(grid, keys=ALS_KEYS):
+def alpha_extensions(grid, keys=ALS_KEYS, chosen=()):
     """For each weighting, the best alpha over all lambdas (at that weighting's best number of
-    factors); if it is the smallest or largest alpha tried, return the next alpha further out at
-    the lambdas around the best one. `reg_extensions` then tunes lambda for the new alpha."""
+    factors), plus the alpha of any `chosen` settings (the one-SE picks); if it is the smallest or
+    largest alpha tried, return the next alpha further out at the lambdas around that setting.
+    `reg_extensions` then tunes lambda for the new alpha."""
     grid = grid.reset_index(drop=True)
+    anchors = [part.loc[part[f"ndcg@{K}"].idxmax()] for _, part in grid.groupby("weighting", sort=False)]
     configs = []
-    for weighting, part in grid.groupby("weighting", sort=False):
-        best = part.loc[part[f"ndcg@{K}"].idxmax()]
-        tried = sorted(part[part["factors"] == best["factors"]]["alpha"].unique())
-        i = ALS_ALPHA_STEPS.index(float(best["alpha"]))
-        steps = [i - 1] if best["alpha"] == tried[0] else []
-        steps += [i + 1] if best["alpha"] == tried[-1] else []
+    for anchor in [*anchors, *chosen]:
+        line = grid[(grid["weighting"] == anchor["weighting"]) & (grid["factors"] == anchor["factors"])]
+        tried = sorted(line["alpha"].unique())
+        i = ALS_ALPHA_STEPS.index(float(anchor["alpha"]))
+        steps = [i - 1] if anchor["alpha"] == tried[0] else []
+        steps += [i + 1] if anchor["alpha"] == tried[-1] else []
         configs += [
-            {"weighting": str(weighting), "alpha": ALS_ALPHA_STEPS[j], "factors": int(best["factors"]), "reg": reg}
-            for j in steps if 0 <= j < len(ALS_ALPHA_STEPS) for reg in neighbouring_regs(best["reg"])
+            {"weighting": str(anchor["weighting"]), "alpha": ALS_ALPHA_STEPS[j],
+             "factors": int(anchor["factors"]), "reg": reg}
+            for j in steps if 0 <= j < len(ALS_ALPHA_STEPS) for reg in neighbouring_regs(anchor["reg"])
         ]
-    return configs
+    return [c for i, c in enumerate(configs) if c not in configs[:i]]
 
 
 # --- choosing settings ------------------------------------------------------------------
@@ -359,9 +363,10 @@ def test_run(playtime, seed, settings, cluster_ks, caps):
 def test_runs(playtime, seeds, settings, cluster_ks, caps):
     """Run `test_run` for every seed not cached yet; per-user NDCG is kept for seeds[0].
 
-    The cache is keyed by everything passed in plus the module constants that shape the results;
-    if any of them changes, all cached test results are deleted and recomputed. (Code changes
-    are not detected: delete results/test_* by hand after one.)
+    The cache is keyed by everything passed in plus ITERATIONS, PCY_BUCKETS and the data filter;
+    if any of them changes, all cached test results are deleted and recomputed. Other constants
+    (K, the long-tail share, tie-breaks, the 20% test share) and code changes are not detected:
+    delete results/test_* by hand after changing one.
     """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     names = {part: RESULTS_DIR / f"test_{part}.csv" for part in ("scores", "diversity")}
@@ -393,3 +398,25 @@ def test_runs(playtime, seeds, settings, cluster_ks, caps):
 
     per_user = dict(np.load(per_user_path))
     return tables["scores"], tables["diversity"], per_user
+
+
+def extra_test_ndcg(playtime, seed, configs):
+    """Per-user test NDCG on split `seed` of extra ALS settings, for sensitivity checks (nothing is
+    chosen from them). `configs` maps a column name to ALS settings. The cache file is named by a
+    hash of everything that shapes the numbers, so a change in any of them gives a new file."""
+    key = json.dumps({"configs": configs, "seed": seed, "iterations": ITERATIONS, "k": K,
+                      "min_players": data.MIN_PLAYERS, "min_played": data.MIN_PLAYED},
+                     sort_keys=True, default=float)
+    name = "test_extra_ndcg_" + hashlib.sha1(key.encode()).hexdigest()[:12]
+
+    def compute():
+        train_full, test = data.split_per_user(playtime, test_frac=0.2, seed=seed)
+        return pd.DataFrame({n: _als_test_ndcg(train_full, test, cfg, seed) for n, cfg in configs.items()})
+
+    return cached_table(name, compute)
+
+
+def _als_test_ndcg(train_full, test, cfg, seed):
+    model = fit_als(train_full, **cfg, seed=seed)
+    recs = evaluate.top_k(evaluate.als_scorer(model), train_full, K)
+    return evaluate.per_user_metrics(recs, test)[f"ndcg@{K}"]
