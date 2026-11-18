@@ -14,7 +14,7 @@ from numba import njit, prange
 from recommender.evaluate import popularity_counts
 from recommender.itemsets import baskets
 
-TIE_BREAK = 1e-9  # fall back to popularity when no rule fires for a game
+TIE_BREAK = 1e-9  # tiny popularity term: ranks games no rule reaches and breaks (near-)ties
 AGGREGATIONS = ("max", "sum")
 
 

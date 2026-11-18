@@ -9,7 +9,7 @@ import scipy.sparse as sp
 
 from recommender.evaluate import popularity_counts
 
-TIE_BREAK = 1e-9  # fall back to popularity when no neighbour fires for a game
+TIE_BREAK = 1e-9  # tiny popularity term: ranks games no neighbour reaches and breaks (near-)ties
 
 
 def played(matrix):
