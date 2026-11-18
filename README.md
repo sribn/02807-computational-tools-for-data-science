@@ -59,4 +59,4 @@ python -m pytest
 jupyter notebook recommender.ipynb
 ```
 
-Run the notebook from the repository root. With the cached `results/` it takes about 14 minutes; recomputing everything takes several hours, mostly the 512-factor ALS fits at about 6 minutes each.
+Run the notebook from the repository root. With the cached `results/` it takes about 15 minutes; recomputing everything takes several hours, mostly the 512-factor ALS fits at about 6 minutes each.
