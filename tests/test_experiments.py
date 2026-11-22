@@ -182,3 +182,33 @@ def test_test_runs_cache_restarts_when_caps_or_seeds_change(tmp_path, monkeypatc
     scores, _, per_user = experiments.test_runs(None, [1, 2], settings, [10], [1, 2, 3])
     assert set(scores["seed"]) == {1, 2}
     assert np.all(per_user["m"] == 1.0)  # per-user NDCG belongs to the first requested seed
+
+
+def test_no_playtime_weighting_ignores_playtime_and_unknown_weightings_fail():
+    import pytest
+    import scipy.sparse as sp
+    short = sp.csr_matrix(np.array([[1.0, 0.0], [0.0, 30.0]]))
+    long = sp.csr_matrix(np.array([[900.0, 0.0], [0.0, 2.0]]))
+    a = experiments.als_confidence(short, experiments.NO_PLAYTIME, 4.0)
+    b = experiments.als_confidence(long, experiments.NO_PLAYTIME, 4.0)
+    assert np.array_equal(a.toarray(), b.toarray()) and np.allclose(a.data, 5.0)
+    with pytest.raises(ValueError):
+        experiments.als_confidence(short, "binary", 4.0)
+
+
+def test_variant_test_runs_are_cached_per_setting(tmp_path, monkeypatch):
+    monkeypatch.setattr(experiments, "RESULTS_DIR", tmp_path)
+    calls = []
+
+    def fake(playtime, seed, cfg):
+        calls.append((seed, cfg["reg"]))
+        return {"ndcg@10": seed / 10}, np.full(3, float(seed))
+    monkeypatch.setattr(experiments, "_variant_test_run", fake)
+    cfg = {"weighting": experiments.NO_PLAYTIME, "alpha": 10.0, "factors": 8, "reg": 1.0}
+    scores, per_user = experiments.variant_test_runs(None, [2, 3], cfg, "ALS, no playtime")
+    again, per_user_again = experiments.variant_test_runs(None, [2, 3], cfg, "ALS, no playtime")
+    assert calls == [(2, 1.0), (3, 1.0)]  # the second call is served from the cache
+    assert list(again["seed"]) == [2, 3] and set(again["method"]) == {"ALS, no playtime"}
+    assert np.all(per_user == 2.0) and np.all(per_user_again == 2.0)  # per-user NDCG of the first seed
+    experiments.variant_test_runs(None, [2, 3], {**cfg, "reg": 5.0}, "ALS, no playtime")
+    assert calls[2:] == [(2, 5.0), (3, 5.0)]  # a different setting is a different cache file

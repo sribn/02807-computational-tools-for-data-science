@@ -23,14 +23,16 @@ class ALSModel:
     item_factors: np.ndarray
 
 
-def confidence(playtime, alpha, item_weights=None):
+def confidence(playtime, alpha, item_weights=None, use_playtime=True):
     """Map a playtime matrix (minutes) to confidence values for the played cells.
 
     Optional `item_weights` (one per game) scale the playtime term, e.g. `idf_weights`
-    to trust plays of niche games more than plays of games everyone has.
+    to trust plays of niche games more than plays of games everyone has. With
+    `use_playtime=False` every played cell gets the same confidence 1 + alpha (the
+    ablation that shows what playtime adds).
     """
     playtime = playtime.tocsr()
-    signal = np.log1p(playtime.data)
+    signal = np.log1p(playtime.data) if use_playtime else np.ones(playtime.nnz)
     if item_weights is not None:
         signal = signal * np.asarray(item_weights)[playtime.indices]
     return sp.csr_matrix(

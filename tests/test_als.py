@@ -104,3 +104,9 @@ def test_idf_weighted_confidence_trusts_niche_games_more():
     idf = idf / idf.mean()
     assert np.allclose(als.idf_weights(playtime), idf) and np.isclose(als.idf_weights(playtime).mean(), 1.0)
     assert np.isclose(conf[0, 1], 1 + idf[1] * np.log1p(60.0))
+
+
+def test_confidence_without_playtime_is_one_plus_alpha_for_every_played_cell():
+    conf = als.confidence(sp.csr_matrix(np.array([[0.0, 9.0, 5000.0]])), alpha=2.0, use_playtime=False)
+    assert conf.nnz == 2
+    assert np.allclose(conf.data, 3.0)

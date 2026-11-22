@@ -38,6 +38,7 @@ ALS_SMALL_REGS = [1.0, 10.0]               # shows what happens without strong r
 ALS_ALPHAS = [1.0, 3.0, 10.0]
 ALS_ALPHA_STEPS = [0.3, 1.0, 3.0, 10.0, 30.0, 100.0]  # alpha values an edge extension can step to
 ALS_WEIGHTINGS = ["none", "idf"]
+NO_PLAYTIME = "no playtime"                # the ablation: every played game gets confidence 1 + alpha
 ALS_KEYS = ["weighting", "alpha", "factors", "reg"]
 
 
@@ -68,16 +69,22 @@ def knn_scorer(train, measure, k):
     return baselines.item_knn_scorer(train, baselines.nearest_neighbours(sim, int(k)))
 
 
-def fit_als(train, weighting, alpha, factors, reg, seed=0, iterations=ITERATIONS, callback=None):
+def als_confidence(train, weighting, alpha):
+    """Confidence matrix for one ALS weighting: "none", "idf" or NO_PLAYTIME."""
+    if weighting not in (*ALS_WEIGHTINGS, NO_PLAYTIME):
+        raise ValueError(f"unknown ALS weighting {weighting!r}")
     weights = als.idf_weights(train) if weighting == "idf" else None
-    conf = als.confidence(train, float(alpha), weights)
+    return als.confidence(train, float(alpha), weights, use_playtime=weighting != NO_PLAYTIME)
+
+
+def fit_als(train, weighting, alpha, factors, reg, seed=0, iterations=ITERATIONS, callback=None):
+    conf = als_confidence(train, weighting, alpha)
     return als.fit(conf, int(factors), float(reg), iterations, seed, callback)
 
 
 def als_with_convergence(train, cfg, seed=0):
     """Fit ALS and report the relative loss change in the last sweep (small = converged)."""
-    weights = als.idf_weights(train) if cfg["weighting"] == "idf" else None
-    conf = als.confidence(train, float(cfg["alpha"]), weights)
+    conf = als_confidence(train, cfg["weighting"], cfg["alpha"])
     losses = []
 
     def track(it, model):
@@ -289,8 +296,7 @@ def cached_table(name, compute):
 
 def convergence_trace(train, valid, cfg, seed, sweeps):
     """Training loss and validation NDCG after every ALS sweep."""
-    weights = als.idf_weights(train) if cfg["weighting"] == "idf" else None
-    conf = als.confidence(train, float(cfg["alpha"]), weights)
+    conf = als_confidence(train, cfg["weighting"], cfg["alpha"])
     rows = []
 
     def track(it, model):
@@ -420,3 +426,36 @@ def _als_test_ndcg(train_full, test, cfg, seed):
     model = fit_als(train_full, **cfg, seed=seed)
     recs = evaluate.top_k(evaluate.als_scorer(model), train_full, K)
     return evaluate.per_user_metrics(recs, test)[f"ndcg@{K}"]
+
+
+def variant_test_runs(playtime, seeds, cfg, name):
+    """Test metrics on every split for one ALS setting outside the main comparison (the
+    no-playtime ablation), refit on train + validation as in `test_run`. Returns (scores,
+    per-user NDCG on seeds[0]). Cached like `extra_test_ndcg`: the file names hash everything
+    that shapes the numbers, so a change in any of them gives new files."""
+    key = json.dumps({"cfg": cfg, "name": name, "seeds": list(seeds), "iterations": ITERATIONS, "k": K,
+                      "min_players": data.MIN_PLAYERS, "min_played": data.MIN_PLAYED},
+                     sort_keys=True, default=float)
+    stem = "test_variant_" + hashlib.sha1(key.encode()).hexdigest()[:12]
+    scores_path, per_user_path = RESULTS_DIR / f"{stem}_scores.csv", RESULTS_DIR / f"{stem}_per_user.csv"
+    if scores_path.exists() and per_user_path.exists():
+        return pd.read_csv(scores_path), pd.read_csv(per_user_path)[f"ndcg@{K}"].to_numpy()
+
+    rows, first = [], None
+    for seed in seeds:
+        metrics, per_user = _variant_test_run(playtime, seed, cfg)
+        rows.append({"seed": seed, "method": name, **metrics})
+        first = per_user if first is None else first
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    scores = pd.DataFrame(rows)
+    scores.to_csv(scores_path, index=False)
+    pd.DataFrame({f"ndcg@{K}": first}).to_csv(per_user_path, index=False)
+    return scores, first
+
+
+def _variant_test_run(playtime, seed, cfg):
+    train_full, test = data.split_per_user(playtime, test_frac=0.2, seed=seed)
+    model = fit_als(train_full, **cfg, seed=seed)
+    recs = evaluate.top_k(evaluate.als_scorer(model), train_full, K)
+    sim = baselines.item_similarity(baselines.pair_counts(train_full))
+    return list_metrics(recs, test, evaluate.popularity_counts(train_full), sim)
