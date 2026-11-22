@@ -1,13 +1,13 @@
 """Implicit-feedback ALS (Hu, Koren & Volinsky, 2008), implemented with NumPy + Numba.
 
-Every user-game cell has a preference p (1 if played, else 0) and a confidence
-c = 1 + alpha * log(1 + playtime), with c = 1 for unplayed cells. ALS minimises
+Every user-game cell has a preference p (1 if played, else 0) and a confidence c:
+c = 1 + alpha for played cells and c = 1 for unplayed cells. ALS minimises
 
     sum_ui c_ui (p_ui - x_u . y_i)^2 + reg * (sum_u |x_u|^2 + sum_i |y_i|^2)
 
 by alternately solving for all user vectors with the game vectors fixed, and vice versa.
 The confidence matrix must store exactly the played cells: every stored entry is read as
-p = 1, so an explicit zero playtime would wrongly count as played.
+p = 1, so an explicit zero would wrongly count as played.
 """
 
 from dataclasses import dataclass
@@ -23,28 +23,12 @@ class ALSModel:
     item_factors: np.ndarray
 
 
-def confidence(playtime, alpha, item_weights=None, use_playtime=True):
-    """Map a playtime matrix (minutes) to confidence values for the played cells.
-
-    Optional `item_weights` (one per game) scale the playtime term, e.g. `idf_weights`
-    to trust plays of niche games more than plays of games everyone has. With
-    `use_playtime=False` every played cell gets the same confidence 1 + alpha (the
-    ablation that shows what playtime adds).
-    """
-    playtime = playtime.tocsr()
-    signal = np.log1p(playtime.data) if use_playtime else np.ones(playtime.nnz)
-    if item_weights is not None:
-        signal = signal * np.asarray(item_weights)[playtime.indices]
+def confidence(played, alpha):
+    """Confidence values for the played cells (the stored entries of `played`): 1 + alpha each."""
+    played = played.tocsr()
     return sp.csr_matrix(
-        (1.0 + alpha * signal, playtime.indices, playtime.indptr), shape=playtime.shape
+        (np.full(played.nnz, 1.0 + alpha), played.indices, played.indptr), shape=played.shape
     )
-
-
-def idf_weights(playtime):
-    """Inverse document frequency per game, log(n_users / n_players), scaled to mean 1."""
-    players = np.bincount(playtime.tocsr().indices, minlength=playtime.shape[1])
-    idf = np.log(playtime.shape[0] / np.maximum(players, 1))
-    return idf / idf.mean()
 
 
 def initial_factors(shape, factors, seed=0):

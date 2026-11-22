@@ -7,7 +7,6 @@ recompute it. A grid file is keyed by the settings in each row only, so delete i
 the code, the data filter or ITERATIONS.
 """
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -30,16 +29,14 @@ RULE_TRIPLE_SUPPORTS = [0, 60, 150, 300]   # 0 = pairs only
 RULE_AGGREGATIONS = ["max", "sum"]
 KNN_MEASURES = ["cosine", "jaccard"]
 KNN_NEIGHBOURS = [1, 2, 5, 10, 20, 50, 100, 200, 500]  # plus "all games"
-ALS_ALPHA = 3.0
+ALS_ALPHA = 10.0                           # stage 1
 ALS_FACTORS = [64, 128, 256]
 ALS_MAX_FACTORS = 512                      # compute cap, tried only near the best lambda
 ALS_REGS = [30.0, 100.0, 200.0, 250.0, 300.0, 375.0, 450.0, 700.0, 1000.0, 1500.0, 3000.0]
 ALS_SMALL_REGS = [1.0, 10.0]               # shows what happens without strong regularisation
-ALS_ALPHAS = [1.0, 3.0, 10.0]
-ALS_ALPHA_STEPS = [0.3, 1.0, 3.0, 10.0, 30.0, 100.0]  # alpha values an edge extension can step to
-ALS_WEIGHTINGS = ["none", "idf"]
-NO_PLAYTIME = "no playtime"                # the ablation: every played game gets confidence 1 + alpha
-ALS_KEYS = ["weighting", "alpha", "factors", "reg"]
+ALS_ALPHAS = [3.0, 10.0, 30.0]             # stage 2
+ALS_ALPHA_STEPS = [0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 300.0]  # alpha values an edge extension can step to
+ALS_KEYS = ["alpha", "factors", "reg"]
 
 
 # --- building recommenders -------------------------------------------------------------
@@ -69,22 +66,14 @@ def knn_scorer(train, measure, k):
     return baselines.item_knn_scorer(train, baselines.nearest_neighbours(sim, int(k)))
 
 
-def als_confidence(train, weighting, alpha):
-    """Confidence matrix for one ALS weighting: "none", "idf" or NO_PLAYTIME."""
-    if weighting not in (*ALS_WEIGHTINGS, NO_PLAYTIME):
-        raise ValueError(f"unknown ALS weighting {weighting!r}")
-    weights = als.idf_weights(train) if weighting == "idf" else None
-    return als.confidence(train, float(alpha), weights, use_playtime=weighting != NO_PLAYTIME)
-
-
-def fit_als(train, weighting, alpha, factors, reg, seed=0, iterations=ITERATIONS, callback=None):
-    conf = als_confidence(train, weighting, alpha)
+def fit_als(train, alpha, factors, reg, seed=0, iterations=ITERATIONS, callback=None):
+    conf = als.confidence(train, float(alpha))
     return als.fit(conf, int(factors), float(reg), iterations, seed, callback)
 
 
 def als_with_convergence(train, cfg, seed=0):
     """Fit ALS and report the relative loss change in the last sweep (small = converged)."""
-    conf = als_confidence(train, cfg["weighting"], cfg["alpha"])
+    conf = als.confidence(train, float(cfg["alpha"]))
     losses = []
 
     def track(it, model):
@@ -159,10 +148,10 @@ def knn_configs(n_items):
 
 def als_stage1_configs():
     grid = [
-        {"weighting": "none", "alpha": ALS_ALPHA, "factors": f, "reg": reg}
+        {"alpha": ALS_ALPHA, "factors": f, "reg": reg}
         for f in ALS_FACTORS for reg in ALS_REGS
     ]
-    small = [{"weighting": "none", "alpha": ALS_ALPHA, "factors": 128, "reg": reg} for reg in ALS_SMALL_REGS]
+    small = [{"alpha": ALS_ALPHA, "factors": 128, "reg": reg} for reg in ALS_SMALL_REGS]
     return grid + small
 
 
@@ -183,29 +172,29 @@ def als_cap_configs(stage1):
     at_256 = stage1[stage1["factors"] == max(ALS_FACTORS)].reset_index(drop=True)
     best_reg = at_256.loc[at_256[f"ndcg@{K}"].idxmax(), "reg"]
     return [
-        {"weighting": "none", "alpha": ALS_ALPHA, "factors": ALS_MAX_FACTORS, "reg": reg}
+        {"alpha": ALS_ALPHA, "factors": ALS_MAX_FACTORS, "reg": reg}
         for reg in neighbouring_regs(best_reg, below=1, above=2)
     ]
 
 
 def als_stage2_configs(stage1):
-    """alpha and idf weighting around the best (factors, lambda) found in stage 1."""
+    """alpha around the best (factors, lambda) found in stage 1."""
     stage1 = stage1.reset_index(drop=True)
     best = stage1.loc[stage1[f"ndcg@{K}"].idxmax()]
     return [
-        {"weighting": w, "alpha": a, "factors": int(best["factors"]), "reg": reg}
-        for w in ALS_WEIGHTINGS for a in ALS_ALPHAS for reg in neighbouring_regs(best["reg"])
+        {"alpha": a, "factors": int(best["factors"]), "reg": reg}
+        for a in ALS_ALPHAS for reg in neighbouring_regs(best["reg"])
     ]
 
 
 def reg_extensions(grid, keys=ALS_KEYS, chosen=()):
-    """For each (weighting, alpha), take its best setting, plus any `chosen` settings (the one-SE
-    picks); if that lambda is the smallest or largest tried next to it, return the setting one grid
-    lambda further out. Empty once every such lambda is inside its range, so conclusions about
-    weighting and alpha rest on tuned lambdas and the one-SE rule saw the lambdas past its pick."""
+    """For each alpha, take its best setting, plus any `chosen` settings (the one-SE pick); if that
+    lambda is the smallest or largest tried next to it, return the setting one grid lambda further
+    out. Empty once every such lambda is inside its range, so conclusions about alpha rest on tuned
+    lambdas and the one-SE rule saw the lambdas past its pick."""
     grid = grid.reset_index(drop=True)
     others = [k for k in keys if k != "reg"]
-    anchors = [part.loc[part[f"ndcg@{K}"].idxmax()] for _, part in grid.groupby(["weighting", "alpha"], sort=False)]
+    anchors = [part.loc[part[f"ndcg@{K}"].idxmax()] for _, part in grid.groupby("alpha", sort=False)]
     ladder = reg_ladder()
     configs = []
     for anchor in [*anchors, *chosen]:
@@ -214,30 +203,27 @@ def reg_extensions(grid, keys=ALS_KEYS, chosen=()):
         steps = [i - 1] if anchor["reg"] == tried[0] else []
         steps += [i + 1] if anchor["reg"] == tried[-1] else []
         configs += [
-            {"weighting": str(anchor["weighting"]), "alpha": float(anchor["alpha"]),
-             "factors": int(anchor["factors"]), "reg": ladder[j]}
+            {"alpha": float(anchor["alpha"]), "factors": int(anchor["factors"]), "reg": ladder[j]}
             for j in steps if 0 <= j < len(ladder)
         ]
     return [c for i, c in enumerate(configs) if c not in configs[:i]]
 
 
 def alpha_extensions(grid, keys=ALS_KEYS, chosen=()):
-    """For each weighting, the best alpha over all lambdas (at that weighting's best number of
-    factors), plus the alpha of any `chosen` settings (the one-SE picks); if it is the smallest or
-    largest alpha tried, return the next alpha further out at the lambdas around that setting.
-    `reg_extensions` then tunes lambda for the new alpha."""
+    """The best alpha over all lambdas (at the best number of factors), plus the alpha of any
+    `chosen` settings (the one-SE pick); if it is the smallest or largest alpha tried, return the
+    next alpha further out at the lambdas around that setting. `reg_extensions` then tunes lambda
+    for the new alpha."""
     grid = grid.reset_index(drop=True)
-    anchors = [part.loc[part[f"ndcg@{K}"].idxmax()] for _, part in grid.groupby("weighting", sort=False)]
+    best = grid.loc[grid[f"ndcg@{K}"].idxmax()]
     configs = []
-    for anchor in [*anchors, *chosen]:
-        line = grid[(grid["weighting"] == anchor["weighting"]) & (grid["factors"] == anchor["factors"])]
-        tried = sorted(line["alpha"].unique())
+    for anchor in [best, *chosen]:
+        tried = sorted(grid[grid["factors"] == anchor["factors"]]["alpha"].unique())
         i = ALS_ALPHA_STEPS.index(float(anchor["alpha"]))
         steps = [i - 1] if anchor["alpha"] == tried[0] else []
         steps += [i + 1] if anchor["alpha"] == tried[-1] else []
         configs += [
-            {"weighting": str(anchor["weighting"]), "alpha": ALS_ALPHA_STEPS[j],
-             "factors": int(anchor["factors"]), "reg": reg}
+            {"alpha": ALS_ALPHA_STEPS[j], "factors": int(anchor["factors"]), "reg": reg}
             for j in steps if 0 <= j < len(ALS_ALPHA_STEPS) for reg in neighbouring_regs(anchor["reg"])
         ]
     return [c for i, c in enumerate(configs) if c not in configs[:i]]
@@ -296,7 +282,7 @@ def cached_table(name, compute):
 
 def convergence_trace(train, valid, cfg, seed, sweeps):
     """Training loss and validation NDCG after every ALS sweep."""
-    conf = als_confidence(train, cfg["weighting"], cfg["alpha"])
+    conf = als.confidence(train, float(cfg["alpha"]))
     rows = []
 
     def track(it, model):
@@ -323,11 +309,10 @@ def list_metrics(recs, truth, popularity, sim):
 def final_methods(train_full, settings, seed):
     """Every method refit on train + validation with its chosen settings (supports already scaled).
 
-    Returns the scorers by name and the two fitted ALS models by name.
+    Returns the scorers by name and the fitted ALS model.
     """
     pairs, triples, knn = settings["rules_pairs"], settings["rules_triples"], settings["knn"]
     als_model = fit_als(train_full, **settings["als"], seed=seed)
-    idf_model = fit_als(train_full, **settings["als_idf"], seed=seed)
     methods = {
         "Popularity": evaluate.popularity_scorer(train_full),
         "Rules (pairs)": rules_scorer(train_full, pairs["pair_support"], 0, pairs["aggregate"]),
@@ -335,18 +320,15 @@ def final_methods(train_full, settings, seed):
             train_full, triples["pair_support"], triples["triple_support"], triples["aggregate"]),
         "Item-kNN": knn_scorer(train_full, knn["measure"], knn["k"]),
         "ALS": evaluate.als_scorer(als_model),
-        "ALS + idf": evaluate.als_scorer(idf_model),
     }
-    return methods, {"ALS": als_model, "ALS + idf": idf_model}
+    return methods, als_model
 
 
 def test_run(playtime, seed, settings, cluster_ks, caps):
     """Split with `seed`, refit every method, score it on the test games, and trace how
-    capping games per cluster changes the lists of the headline ALS variant
-    (settings["headline"]). Returns (scores, diversity, per-user NDCG)."""
+    capping games per cluster changes the ALS lists. Returns (scores, diversity, per-user NDCG)."""
     train_full, test = data.split_per_user(playtime, test_frac=0.2, seed=seed)
-    methods, models = final_methods(train_full, settings, seed)
-    als_model = models[settings["headline"]]
+    methods, als_model = final_methods(train_full, settings, seed)
     popularity = evaluate.popularity_counts(train_full)
     sim = baselines.item_similarity(baselines.pair_counts(train_full))
 
@@ -405,57 +387,3 @@ def test_runs(playtime, seeds, settings, cluster_ks, caps):
     per_user = dict(np.load(per_user_path))
     return tables["scores"], tables["diversity"], per_user
 
-
-def extra_test_ndcg(playtime, seed, configs):
-    """Per-user test NDCG on split `seed` of extra ALS settings, for sensitivity checks (nothing is
-    chosen from them). `configs` maps a column name to ALS settings. The cache file is named by a
-    hash of everything that shapes the numbers, so a change in any of them gives a new file."""
-    key = json.dumps({"configs": configs, "seed": seed, "iterations": ITERATIONS, "k": K,
-                      "min_players": data.MIN_PLAYERS, "min_played": data.MIN_PLAYED},
-                     sort_keys=True, default=float)
-    name = "test_extra_ndcg_" + hashlib.sha1(key.encode()).hexdigest()[:12]
-
-    def compute():
-        train_full, test = data.split_per_user(playtime, test_frac=0.2, seed=seed)
-        return pd.DataFrame({n: _als_test_ndcg(train_full, test, cfg, seed) for n, cfg in configs.items()})
-
-    return cached_table(name, compute)
-
-
-def _als_test_ndcg(train_full, test, cfg, seed):
-    model = fit_als(train_full, **cfg, seed=seed)
-    recs = evaluate.top_k(evaluate.als_scorer(model), train_full, K)
-    return evaluate.per_user_metrics(recs, test)[f"ndcg@{K}"]
-
-
-def variant_test_runs(playtime, seeds, cfg, name):
-    """Test metrics on every split for one ALS setting outside the main comparison (the
-    no-playtime ablation), refit on train + validation as in `test_run`. Returns (scores,
-    per-user NDCG on seeds[0]). Cached like `extra_test_ndcg`: the file names hash everything
-    that shapes the numbers, so a change in any of them gives new files."""
-    key = json.dumps({"cfg": cfg, "name": name, "seeds": list(seeds), "iterations": ITERATIONS, "k": K,
-                      "min_players": data.MIN_PLAYERS, "min_played": data.MIN_PLAYED},
-                     sort_keys=True, default=float)
-    stem = "test_variant_" + hashlib.sha1(key.encode()).hexdigest()[:12]
-    scores_path, per_user_path = RESULTS_DIR / f"{stem}_scores.csv", RESULTS_DIR / f"{stem}_per_user.csv"
-    if scores_path.exists() and per_user_path.exists():
-        return pd.read_csv(scores_path), pd.read_csv(per_user_path)[f"ndcg@{K}"].to_numpy()
-
-    rows, first = [], None
-    for seed in seeds:
-        metrics, per_user = _variant_test_run(playtime, seed, cfg)
-        rows.append({"seed": seed, "method": name, **metrics})
-        first = per_user if first is None else first
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    scores = pd.DataFrame(rows)
-    scores.to_csv(scores_path, index=False)
-    pd.DataFrame({f"ndcg@{K}": first}).to_csv(per_user_path, index=False)
-    return scores, first
-
-
-def _variant_test_run(playtime, seed, cfg):
-    train_full, test = data.split_per_user(playtime, test_frac=0.2, seed=seed)
-    model = fit_als(train_full, **cfg, seed=seed)
-    recs = evaluate.top_k(evaluate.als_scorer(model), train_full, K)
-    sim = baselines.item_similarity(baselines.pair_counts(train_full))
-    return list_metrics(recs, test, evaluate.popularity_counts(train_full), sim)

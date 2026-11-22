@@ -15,10 +15,10 @@ def block_playtime():
     return sp.csr_matrix(dense)
 
 
-def test_confidence_is_one_plus_alpha_log_playtime():
-    conf = als.confidence(sp.csr_matrix(np.array([[0.0, 9.0]])), alpha=2.0)
-    assert conf.nnz == 1
-    assert np.isclose(conf[0, 1], 1 + 2 * np.log(10))
+def test_confidence_is_one_plus_alpha_for_every_played_cell_whatever_its_playtime():
+    conf = als.confidence(sp.csr_matrix(np.array([[0.0, 9.0, 5000.0]])), alpha=2.0)
+    assert conf.nnz == 2
+    assert np.allclose(conf.data, 3.0)
 
 
 def test_solve_rows_matches_dense_closed_form():
@@ -95,18 +95,3 @@ def test_similar_items_stay_within_group():
     top, _ = als.similar_items(model, item=0, n=2)
     assert set(top) == {1, 2}
 
-
-def test_idf_weighted_confidence_trusts_niche_games_more():
-    playtime = sp.csr_matrix(np.array([[60.0, 60.0], [60.0, 0.0], [60.0, 0.0]]))
-    conf = als.confidence(playtime, alpha=1.0, item_weights=als.idf_weights(playtime))
-    assert conf[0, 1] > conf[0, 0]
-    idf = np.log(3 / np.array([3.0, 1.0]))
-    idf = idf / idf.mean()
-    assert np.allclose(als.idf_weights(playtime), idf) and np.isclose(als.idf_weights(playtime).mean(), 1.0)
-    assert np.isclose(conf[0, 1], 1 + idf[1] * np.log1p(60.0))
-
-
-def test_confidence_without_playtime_is_one_plus_alpha_for_every_played_cell():
-    conf = als.confidence(sp.csr_matrix(np.array([[0.0, 9.0, 5000.0]])), alpha=2.0, use_playtime=False)
-    assert conf.nnz == 2
-    assert np.allclose(conf.data, 3.0)
